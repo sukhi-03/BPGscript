@@ -1,0 +1,31 @@
+Folder PATH listing
+Volume serial number is D685-98D9
+C:.
+¦   .gitignore
+¦   invalid_rows.csv
+¦   structure.txt
+¦   
++---code
+¦   ¦   ask_ollama.py
+¦   ¦   main.py
+¦   ¦   parse.py
+¦   ¦   pdf.py
+¦   ¦   
+¦   +---__pycache__
+¦           ask_ollama.cpython-310.pyc
+¦           parse.cpython-310.pyc
+¦           pdf.cpython-310.pyc
+¦           
++---input
+¦       BPG.xlsx
+¦       
++---output
+¦       BPG_output_CT_e1.xlsx
+¦       
++---pdfs
++---test
+        .env
+        BPGscript.ipynb
+        check_column.ipynb
+        PlanType_1.ipynb
+        
