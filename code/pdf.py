@@ -40,7 +40,7 @@ def download_pdf(url):
     try:
         os.makedirs("pdfs", exist_ok=True)
         from pathlib import Path
-        filename = Path("pdfs") / Path(url).name.split("?")[0]
+        filename = Path("./pdfs") / Path(url).name.split("?")[0]
 
         if os.path.exists(filename):
             return filename
