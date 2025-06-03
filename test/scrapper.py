@@ -13,20 +13,12 @@ load_dotenv()
 # Constants
 PDF_FOLDER = '/home/asura/Desktop/360/BPGscript/pdfs'
 MAPPING_PATH = '/home/asura/Desktop/360/BPGscript/input/PayerProcessor.xlsx'
-OUTPUT_FILE = os.path.join(PDF_FOLDER, "/home/asura/Desktop/360/BPGscript/output/payer_data_llm_cleaned_check3.xlsx")
+OUTPUT_FILE = os.path.join(PDF_FOLDER, "/home/asura/Desktop/360/BPGscript/output/payer_data_llm_cleaned_check1.xlsx")
 o_model = 'llama3.1:8b'
 
 # Read payer/processor mapping
 payer_df = pd.read_excel(MAPPING_PATH)
-
-# Extract the three separate lists
-payer_list = payer_df['Payer'].dropna().unique().tolist()
-payer_parent_list = payer_df['Payer Parent'].dropna().unique().tolist()
-processor_list = payer_df['Processor'].dropna().unique().tolist()
-
-# Combine all names for comprehensive matching
-all_payer_names = list(set(payer_list + payer_parent_list))
-all_processor_names = processor_list
+payer_processor_list = payer_df.to_dict(orient="records")
 
 
 def clean_text(text):
@@ -50,37 +42,17 @@ def fix_wrapped_lines(text):
 
 
 def match_payer_and_processor(text):
-    """Enhanced matching using the three separate lists"""
     lowered = text.lower()
     matched_payer = ""
     matched_processor = ""
-    matched_parent = ""
-    
-    # Check for payer names (including partial matches)
-    for payer in all_payer_names:
-        if payer and len(str(payer)) > 3:  # Avoid very short matches
-            payer_lower = str(payer).lower()
-            if payer_lower in lowered:
-                matched_payer = payer
-                break
-    
-    # Check for processor names
-    for processor in all_processor_names:
-        if processor and len(str(processor)) > 3:
-            processor_lower = str(processor).lower()
-            if processor_lower in lowered:
-                matched_processor = processor
-                break
-    
-    # Check for parent company names
-    for parent in payer_parent_list:
-        if parent and len(str(parent)) > 3:
-            parent_lower = str(parent).lower()
-            if parent_lower in lowered:
-                matched_parent = parent
-                break
-    
-    return matched_payer, matched_processor, matched_parent
+    for item in payer_processor_list:
+        payer_name = str(item.get("Payer Name", "")).lower()
+        processor_name = str(item.get("Processor Name", "")).lower()
+        if payer_name and payer_name in lowered:
+            matched_payer = item.get("Payer Name")
+        if processor_name and processor_name in lowered:
+            matched_processor = item.get("Processor Name")
+    return matched_payer, matched_processor
 
 
 def detect_table_structure(text):
@@ -102,29 +74,21 @@ def detect_table_structure(text):
 def extract_table_data(text, document_name, page_num):
     """Extract data from structured tables (like BIN/PCN combinations)"""
     
-    # Create payer context from known payers
-    payer_context = "Known payers include: " + ", ".join(all_payer_names[:10]) + "..."
-    processor_context = "Known processors include: " + ", ".join(all_processor_names[:10]) + "..."
-    
     prompt = f"""
 You are analyzing a BIN/PCN combination table from a payer document. Look at the table structure carefully.
-
-{payer_context}
-{processor_context}
 
 CRITICAL INSTRUCTIONS:
 1. This table has columns: BIN | Processor Control Number | Note
 2. Each BIN can have multiple PCNs listed vertically below it
 3. When a BIN has multiple PCNs, each BIN-PCN pair is a separate entry
 4. BIN numbers are 5-6 digits (610415, 004336, 610502, etc.)
-5. PCNs are short codes (PCS, ADV, HNET, FEPRX24, AC, WG, FC, WK, etc.)
+5. PCNs are short codes (PCS, ADV, HNET, FEPRX, AC, WG, FC, WK, etc.)
 
 EXTRACTION RULES:
 - If you see a BIN with multiple PCNs below it, create one entry for each BIN-PCN combination
 - If you see PCNs without a direct BIN above them, look for the nearest BIN in the table structure
 - Don't invent plan names - extract only what's actually shown
 - Group codes (GRP) are usually separate from PCN codes
-- Use known payer names from the context above when possible
 
 EXAMPLE TABLE INTERPRETATION:
 ```
@@ -132,7 +96,7 @@ EXAMPLE TABLE INTERPRETATION:
           ADV
           RXSADV
 004336    HNET
-610502    FEPRX24
+610502    FEPRX
 020099    AC
           WG  
           FC
@@ -143,15 +107,15 @@ This should create entries like:
 - BIN: 610415, PCN: ADV
 - BIN: 610415, PCN: RXSADV
 - BIN: 004336, PCN: HNET
-- BIN: 610502, PCN: FEPRX24
+- BIN: 610502, PCN: FEPRX
 - BIN: 020099, PCN: AC
 - BIN: 020099, PCN: WG
 - BIN: 020099, PCN: FC
 
-IMPORTANT: Do not include any explanation or extra text. Return only a JSON array of dictionaries like:
+Return ONLY a JSON array - no extra text:
 [
   {{
-    "Payer Name": "",
+    "Payer Name": "CVS Caremark",
     "Plan Name/Group Name": "",
     "Type Of Plan": "",
     "BIN": "610415",
@@ -211,10 +175,10 @@ Fields to extract (if available):
 IMPORTANT: 
 - Only put actual plan names in "Plan Name/Group Name" field
 - BIN should contain ONLY 5-6 digit numbers
-- PCN should contain ONLY short letter codes, sometimes with number or only numbers
+- PCN should contain ONLY short letter codes
 - Don't put BIN numbers in plan name fields
 
-IMPORTANT: Do not include any explanation or extra text. Return ONLY a JSON array of dictionaries like:
+Return ONLY a JSON array of dictionaries like:
 [
   {{
     "Payer Name": "...",
@@ -269,7 +233,7 @@ def process_pdf(pdf_path):
                 
             cleaned = clean_text(text)
             fixed = fix_wrapped_lines(cleaned)
-            matched_payer, matched_processor, matched_parent = match_payer_and_processor(fixed)
+            matched_payer, matched_processor = match_payer_and_processor(fixed)
             
             # Choose extraction method based on content type
             if detect_table_structure(fixed):
@@ -284,11 +248,6 @@ def process_pdf(pdf_path):
                 entry["Page No."] = i + 1
                 entry["Matched Payer Name"] = matched_payer
                 entry["Matched Processor Name"] = matched_processor
-                entry["Matched Parent Name"] = matched_parent
-                
-                # If no payer name was extracted but we found a match, use it
-                if not entry.get("Payer Name") and matched_payer:
-                    entry["Payer Name"] = matched_payer
 
             all_page_data.extend(page_data)
             
