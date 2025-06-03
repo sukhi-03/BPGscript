@@ -13,7 +13,7 @@ load_dotenv()
 # Constants
 PDF_FOLDER = '/home/asura/Desktop/360/BPGscript/pdfs'
 MAPPING_PATH = '/home/asura/Desktop/360/BPGscript/input/PayerProcessor.xlsx'
-OUTPUT_FILE = os.path.join(PDF_FOLDER, "/home/asura/Desktop/360/BPGscript/output/payer_data_llm_cleaned_check2.xlsx")
+OUTPUT_FILE = os.path.join(PDF_FOLDER, "/home/asura/Desktop/360/BPGscript/output/payer_data_llm_cleaned_check4.xlsx")
 o_model = 'llama3.1:8b'
 
 # Read payer/processor mapping
@@ -75,30 +75,48 @@ def extract_table_data(text, document_name, page_num):
     """Extract data from structured tables (like BIN/PCN combinations)"""
     
     prompt = f"""
-You are analyzing a structured table from a payer document. This appears to be a BIN/PCN combination table.
+You are analyzing a BIN/PCN combination table from a payer document. Look at the table structure carefully.
 
-IMPORTANT INSTRUCTIONS:
-1. This is a TABLE with columns: BIN | Processor Control Number | Note
-2. Each row represents ONE plan configuration
-3. BIN numbers are 5-6 digits (like 610415, 004336)
-4. Processor Control Numbers (PCN) are short codes (like PCS, ADV, FEPRX, etc.)
-5. When you see multiple PCNs under one BIN, create separate entries for each BIN-PCN combination
+CRITICAL INSTRUCTIONS:
+1. This table has columns: BIN | Processor Control Number | Note
+2. Each BIN can have multiple PCNs listed vertically below it
+3. When a BIN has multiple PCNs, each BIN-PCN pair is a separate entry
+4. BIN numbers are 5-6 digits (610415, 004336, 610502, 026150 etc.)
+5. PCNs are short codes (PCS, ADV, HNET, FEPRX, AC, WG, FC, WK, SSRX42,  etc.)
 
-Extract each BIN-PCN combination as a separate plan entry.
+EXTRACTION RULES:
+- If you see a BIN with multiple PCNs below it, create one entry for each BIN-PCN combination
+- If you see PCNs without a direct BIN above them, look for the nearest BIN in the table structure
+- Don't invent plan names - extract only what's actually shown
+- Group codes (GRP) are usually separate from PCN codes
 
-EXAMPLE: If you see:
-BIN: 610415, PCN: PCS/ADV/RXSADV/DCADV
-Create separate entries:
+EXAMPLE TABLE INTERPRETATION:
+```
+610415    PCS
+          ADV
+          RXSADV
+004336    HNET
+610502    FEPRX
+020099    AC
+          WG  
+          FC
+```
+
+This should create entries like:
 - BIN: 610415, PCN: PCS
-- BIN: 610415, PCN: ADV  
+- BIN: 610415, PCN: ADV
 - BIN: 610415, PCN: RXSADV
-- BIN: 610415, PCN: DCADV
+- BIN: 004336, PCN: HNET
+- BIN: 610502, PCN: FEPRX
+- BIN: 020099, PCN: AC
+- BIN: 020099, PCN: WG
+- BIN: 020099, PCN: FC
 
-Return ONLY a JSON array like:
+Important: Do not include any explanation or extra text. Return ONLY a JSON array - no extra text:
 [
   {{
     "Payer Name": "CVS Caremark",
-    "Plan Name/Group Name": "Legacy PCS",
+    "Plan Name/Group Name": "",
     "Type Of Plan": "",
     "BIN": "610415",
     "PCN": "PCS",
@@ -148,7 +166,7 @@ Fields to extract (if available):
 - Plan Name/Group Name  
 - Type Of Plan
 - BIN (5-6 digit numbers only)
-- PCN (short codes like PCS, ADV, FEPRX)
+- PCN (short codes like PCS, ADV, FEPRX, SSRX42)
 - GRP (group codes)
 - Effective Date
 - Document Name: "{document_name}"
@@ -157,10 +175,10 @@ Fields to extract (if available):
 IMPORTANT: 
 - Only put actual plan names in "Plan Name/Group Name" field
 - BIN should contain ONLY 5-6 digit numbers
-- PCN should contain ONLY short letter codes
+- PCN should contain ONLY short codes
 - Don't put BIN numbers in plan name fields
 
-Return ONLY a JSON array of dictionaries like:
+Important: Do not include any explanation or extra text. Return ONLY a JSON array of dictionaries like:
 [
   {{
     "Payer Name": "...",
@@ -174,8 +192,6 @@ Return ONLY a JSON array of dictionaries like:
     "Page No.": ...
   }}
 ]
-
-IMPORTANT: Return only a JSON array of dictionaries. Do not include any explanation or extra text.
 
 Text:
 {text}
@@ -247,13 +263,38 @@ def post_process_data(df):
     # Clean BIN values - should only be 5-6 digits
     df['BIN'] = df['BIN'].astype(str).str.extract(r'(\d{5,6})')[0]
     
-    # Clean PCN values - should be short codes
-    df['PCN'] = df['PCN'].astype(str).str.replace(r'\d+', '', regex=True).str.strip()
-    df.loc[df['PCN'].str.len() > 10, 'PCN'] = ''
+    # Clean PCN values - should be short codes, remove long descriptive text
+    df['PCN'] = df['PCN'].astype(str)
+    # Remove entries where PCN contains long descriptive text (more than 15 chars or contains spaces)
+    mask = (df['PCN'].str.len() <= 15) & (~df['PCN'].str.contains(r'\s+', na=False))
+    df.loc[~mask, 'PCN'] = ''
+    
+    # Clean GRP column - move long text to notes or remove
+    df['GRP'] = df['GRP'].astype(str)
+    # If GRP contains long descriptive text, clear it
+    mask = df['GRP'].str.contains(r'Group ID|Required|when', case=False, na=False)
+    df.loc[mask, 'GRP'] = ''
+    
+    # Clean Plan Name/Group Name - remove redundant "Legacy" prefix if it's added to everything
+    df['Plan Name/Group Name'] = df['Plan Name/Group Name'].astype(str)
+    # If most entries start with "Legacy", it might be an artifact
+    legacy_count = df['Plan Name/Group Name'].str.startswith('Legacy', na=False).sum()
+    total_count = len(df[df['Plan Name/Group Name'].notna()])
+    if legacy_count > total_count * 0.8:  # If more than 80% start with Legacy
+        df['Plan Name/Group Name'] = df['Plan Name/Group Name'].str.replace(r'^Legacy\s*', '', regex=True)
     
     # Remove rows where both BIN and Plan Name are empty
     df = df[~((df['BIN'].isna() | (df['BIN'] == '')) & 
               (df['Plan Name/Group Name'].isna() | (df['Plan Name/Group Name'] == '')))]
+    
+    # For rows with PCN but no BIN, try to find the most recent BIN in the same page
+    for idx, row in df.iterrows():
+        if pd.isna(row['BIN']) and not pd.isna(row['PCN']) and row['PCN'] != '':
+            # Look for the most recent BIN in the same page
+            same_page = df[(df['Page No.'] == row['Page No.']) & (df.index < idx)]
+            recent_bin = same_page[same_page['BIN'].notna() & (same_page['BIN'] != '')]
+            if not recent_bin.empty:
+                df.at[idx, 'BIN'] = recent_bin.iloc[-1]['BIN']
     
     return df
 
