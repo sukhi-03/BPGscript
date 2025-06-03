@@ -2,3 +2,5 @@
 invalid_rows.csv
 .env
 .xlsx
+/output
+/input
