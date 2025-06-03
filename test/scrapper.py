@@ -13,12 +13,20 @@ load_dotenv()
 # Constants
 PDF_FOLDER = '/home/asura/Desktop/360/BPGscript/pdfs'
 MAPPING_PATH = '/home/asura/Desktop/360/BPGscript/input/PayerProcessor.xlsx'
-OUTPUT_FILE = os.path.join(PDF_FOLDER, "/home/asura/Desktop/360/BPGscript/output/payer_data_llm_cleaned_check2.xlsx")
+OUTPUT_FILE = os.path.join(PDF_FOLDER, "/home/asura/Desktop/360/BPGscript/output/payer_data_llm_cleaned_check3.xlsx")
 o_model = 'llama3.1:8b'
 
 # Read payer/processor mapping
 payer_df = pd.read_excel(MAPPING_PATH)
-payer_processor_list = payer_df.to_dict(orient="records")
+
+# Extract the three separate lists
+payer_list = payer_df['Payer'].dropna().unique().tolist()
+payer_parent_list = payer_df['Payer Parent'].dropna().unique().tolist()
+processor_list = payer_df['Processor'].dropna().unique().tolist()
+
+# Combine all names for comprehensive matching
+all_payer_names = list(set(payer_list + payer_parent_list))
+all_processor_names = processor_list
 
 
 def clean_text(text):
@@ -42,17 +50,37 @@ def fix_wrapped_lines(text):
 
 
 def match_payer_and_processor(text):
+    """Enhanced matching using the three separate lists"""
     lowered = text.lower()
     matched_payer = ""
     matched_processor = ""
-    for item in payer_processor_list:
-        payer_name = str(item.get("Payer Name", "")).lower()
-        processor_name = str(item.get("Processor Name", "")).lower()
-        if payer_name and payer_name in lowered:
-            matched_payer = item.get("Payer Name")
-        if processor_name and processor_name in lowered:
-            matched_processor = item.get("Processor Name")
-    return matched_payer, matched_processor
+    matched_parent = ""
+    
+    # Check for payer names (including partial matches)
+    for payer in all_payer_names:
+        if payer and len(str(payer)) > 3:  # Avoid very short matches
+            payer_lower = str(payer).lower()
+            if payer_lower in lowered:
+                matched_payer = payer
+                break
+    
+    # Check for processor names
+    for processor in all_processor_names:
+        if processor and len(str(processor)) > 3:
+            processor_lower = str(processor).lower()
+            if processor_lower in lowered:
+                matched_processor = processor
+                break
+    
+    # Check for parent company names
+    for parent in payer_parent_list:
+        if parent and len(str(parent)) > 3:
+            parent_lower = str(parent).lower()
+            if parent_lower in lowered:
+                matched_parent = parent
+                break
+    
+    return matched_payer, matched_processor, matched_parent
 
 
 def detect_table_structure(text):
@@ -74,31 +102,57 @@ def detect_table_structure(text):
 def extract_table_data(text, document_name, page_num):
     """Extract data from structured tables (like BIN/PCN combinations)"""
     
+    # Create payer context from known payers
+    payer_context = "Known payers include: " + ", ".join(all_payer_names[:10]) + "..."
+    processor_context = "Known processors include: " + ", ".join(all_processor_names[:10]) + "..."
+    
     prompt = f"""
-You are analyzing a structured table from a payer document. This appears to be a BIN/PCN combination table.
+You are analyzing a BIN/PCN combination table from a payer document. Look at the table structure carefully.
 
-IMPORTANT INSTRUCTIONS:
-1. This is a TABLE with columns: BIN | Processor Control Number | Note
-2. Each row represents ONE plan configuration
-3. BIN numbers are 5-6 digits (like 610415, 004336)
-4. Processor Control Numbers (PCN) are short codes (like PCS, ADV, FEPRX, etc.)
-5. When you see multiple PCNs under one BIN, create separate entries for each BIN-PCN combination
+{payer_context}
+{processor_context}
 
-Extract each BIN-PCN combination as a separate plan entry.
+CRITICAL INSTRUCTIONS:
+1. This table has columns: BIN | Processor Control Number | Note
+2. Each BIN can have multiple PCNs listed vertically below it
+3. When a BIN has multiple PCNs, each BIN-PCN pair is a separate entry
+4. BIN numbers are 5-6 digits (610415, 004336, 610502, etc.)
+5. PCNs are short codes (PCS, ADV, HNET, FEPRX24, AC, WG, FC, WK, etc.)
 
-EXAMPLE: If you see:
-BIN: 610415, PCN: PCS/ADV/RXSADV/DCADV
-Create separate entries:
+EXTRACTION RULES:
+- If you see a BIN with multiple PCNs below it, create one entry for each BIN-PCN combination
+- If you see PCNs without a direct BIN above them, look for the nearest BIN in the table structure
+- Don't invent plan names - extract only what's actually shown
+- Group codes (GRP) are usually separate from PCN codes
+- Use known payer names from the context above when possible
+
+EXAMPLE TABLE INTERPRETATION:
+```
+610415    PCS
+          ADV
+          RXSADV
+004336    HNET
+610502    FEPRX24
+020099    AC
+          WG  
+          FC
+```
+
+This should create entries like:
 - BIN: 610415, PCN: PCS
-- BIN: 610415, PCN: ADV  
+- BIN: 610415, PCN: ADV
 - BIN: 610415, PCN: RXSADV
-- BIN: 610415, PCN: DCADV
+- BIN: 004336, PCN: HNET
+- BIN: 610502, PCN: FEPRX24
+- BIN: 020099, PCN: AC
+- BIN: 020099, PCN: WG
+- BIN: 020099, PCN: FC
 
-Return ONLY a JSON array like:
+IMPORTANT: Do not include any explanation or extra text. Return only a JSON array of dictionaries like:
 [
   {{
-    "Payer Name": "CVS Caremark",
-    "Plan Name/Group Name": "Legacy PCS",
+    "Payer Name": "",
+    "Plan Name/Group Name": "",
     "Type Of Plan": "",
     "BIN": "610415",
     "PCN": "PCS",
@@ -157,10 +211,10 @@ Fields to extract (if available):
 IMPORTANT: 
 - Only put actual plan names in "Plan Name/Group Name" field
 - BIN should contain ONLY 5-6 digit numbers
-- PCN should contain ONLY short letter codes
+- PCN should contain ONLY short letter codes, sometimes with number or only numbers
 - Don't put BIN numbers in plan name fields
 
-Return ONLY a JSON array of dictionaries like:
+IMPORTANT: Do not include any explanation or extra text. Return ONLY a JSON array of dictionaries like:
 [
   {{
     "Payer Name": "...",
@@ -174,8 +228,6 @@ Return ONLY a JSON array of dictionaries like:
     "Page No.": ...
   }}
 ]
-
-IMPORTANT: Return only a JSON array of dictionaries. Do not include any explanation or extra text.
 
 Text:
 {text}
@@ -217,7 +269,7 @@ def process_pdf(pdf_path):
                 
             cleaned = clean_text(text)
             fixed = fix_wrapped_lines(cleaned)
-            matched_payer, matched_processor = match_payer_and_processor(fixed)
+            matched_payer, matched_processor, matched_parent = match_payer_and_processor(fixed)
             
             # Choose extraction method based on content type
             if detect_table_structure(fixed):
@@ -232,6 +284,11 @@ def process_pdf(pdf_path):
                 entry["Page No."] = i + 1
                 entry["Matched Payer Name"] = matched_payer
                 entry["Matched Processor Name"] = matched_processor
+                entry["Matched Parent Name"] = matched_parent
+                
+                # If no payer name was extracted but we found a match, use it
+                if not entry.get("Payer Name") and matched_payer:
+                    entry["Payer Name"] = matched_payer
 
             all_page_data.extend(page_data)
             
@@ -247,13 +304,38 @@ def post_process_data(df):
     # Clean BIN values - should only be 5-6 digits
     df['BIN'] = df['BIN'].astype(str).str.extract(r'(\d{5,6})')[0]
     
-    # Clean PCN values - should be short codes
-    df['PCN'] = df['PCN'].astype(str).str.replace(r'\d+', '', regex=True).str.strip()
-    df.loc[df['PCN'].str.len() > 10, 'PCN'] = ''
+    # Clean PCN values - should be short codes, remove long descriptive text
+    df['PCN'] = df['PCN'].astype(str)
+    # Remove entries where PCN contains long descriptive text (more than 15 chars or contains spaces)
+    mask = (df['PCN'].str.len() <= 15) & (~df['PCN'].str.contains(r'\s+', na=False))
+    df.loc[~mask, 'PCN'] = ''
+    
+    # Clean GRP column - move long text to notes or remove
+    df['GRP'] = df['GRP'].astype(str)
+    # If GRP contains long descriptive text, clear it
+    mask = df['GRP'].str.contains(r'Group ID|Required|when', case=False, na=False)
+    df.loc[mask, 'GRP'] = ''
+    
+    # Clean Plan Name/Group Name - remove redundant "Legacy" prefix if it's added to everything
+    df['Plan Name/Group Name'] = df['Plan Name/Group Name'].astype(str)
+    # If most entries start with "Legacy", it might be an artifact
+    legacy_count = df['Plan Name/Group Name'].str.startswith('Legacy', na=False).sum()
+    total_count = len(df[df['Plan Name/Group Name'].notna()])
+    if legacy_count > total_count * 0.8:  # If more than 80% start with Legacy
+        df['Plan Name/Group Name'] = df['Plan Name/Group Name'].str.replace(r'^Legacy\s*', '', regex=True)
     
     # Remove rows where both BIN and Plan Name are empty
     df = df[~((df['BIN'].isna() | (df['BIN'] == '')) & 
               (df['Plan Name/Group Name'].isna() | (df['Plan Name/Group Name'] == '')))]
+    
+    # For rows with PCN but no BIN, try to find the most recent BIN in the same page
+    for idx, row in df.iterrows():
+        if pd.isna(row['BIN']) and not pd.isna(row['PCN']) and row['PCN'] != '':
+            # Look for the most recent BIN in the same page
+            same_page = df[(df['Page No.'] == row['Page No.']) & (df.index < idx)]
+            recent_bin = same_page[same_page['BIN'].notna() & (same_page['BIN'] != '')]
+            if not recent_bin.empty:
+                df.at[idx, 'BIN'] = recent_bin.iloc[-1]['BIN']
     
     return df
 
