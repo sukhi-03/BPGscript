@@ -18,7 +18,6 @@ This repository contains a set of Python scripts designed to automate the proces
   - [Step-by-Step Instructions](#step-by-step-instructions)
 - [7. Script Details](#7-script-details)
 - [8. Important Notes](#8-important-notes)
-- [9. License](#9-license)
 
 ---
 
@@ -229,9 +228,3 @@ Execution Order
 - 🐍 Python Compatibility: Recommended versions: Python 3.8–3.10.
 
 - 📦 Ghostscript: Required by Camelot. Ensure it's installed and available in the system's PATH.
-
-## License
-
-This project is proprietary and confidential. All rights reserved.
-
-Unauthorized copying, distribution, or use is strictly prohibited without prior written permission from the organization.
