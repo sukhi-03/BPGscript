@@ -3,4 +3,5 @@ invalid_rows.csv
 .env
 .xlsx
 /output
-/input
+/first_94
+/pdf_folders
