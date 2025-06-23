@@ -11,7 +11,7 @@ import camelot
 
 # Load environment variables
 load_dotenv()
-genai.configure(api_key=os.getenv("gemini_api_key_4"))
+genai.configure(api_key=os.getenv("gemini_api_key"))
 
 # Load payer and processor mapping
 mapping_path = r"D:\Projects\BPGscript\input\PayerProcessor.xlsx"
