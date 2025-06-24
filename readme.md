@@ -53,6 +53,8 @@ This system streamlines the management and extraction of information from a larg
 ¦       gemini_camelot.py
 ¦       mastermapping.py
 ¦       pdfHashes.py
+¦       PDFLinks.ipynb
+¦       BPG_with_links.ipynb
 ¦       
 +---input
 ¦       BPG.xlsx
@@ -120,14 +122,17 @@ conda env create -f environment.yml
 conda activate BPGscript
 ```
 #### API Key Configuration
-This project uses the Google Gemini API. Follow the steps below:
+This project uses the Google Gemini API and Serper API. Follow the steps below:
 1. Visit Google AI Studio.
 2. Generate an API key.
 3. Create a .env file in the project root directory.
 4. Add the following line to it:
 
+Serper API: Visit Serper.dev and generate your Serper API key.
+
 ```bash
 gemini_api="YOUR_GEMINI_API_KEY_HERE"
+serper_api="YOUR_SERPER_API_KEY_HERE"
 ```
 
 ### External Data Files
