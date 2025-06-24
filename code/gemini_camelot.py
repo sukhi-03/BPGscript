@@ -21,13 +21,13 @@ payer_parents = payer_df["Payer Parent"].dropna().unique()
 payers = payer_df["Payer"].dropna().unique()
 
 # Paths
-input_pdf_folder = r"D:\Projects\BPGscript\vol2(first200)"
+input_pdf_folder = r"D:\Projects\BPGscript\pdf_folders\unique_pdfs_all"
 split_folder = os.path.join(input_pdf_folder, "split_pages")
 output_folder = r"D:\Projects\BPGscript\output"
 os.makedirs(split_folder, exist_ok=True)
 os.makedirs(output_folder, exist_ok=True)
 
-output_excel_path = os.path.join(output_folder, "payer_data_volume_2(first200)_re.xlsx")
+output_excel_path = os.path.join(output_folder, "payer_data_ALL_BPGcombinations.xlsx")
 checkpoint_path = os.path.join(output_folder, "checkpoint_processed_files.json")
 
 # Load previous progress
