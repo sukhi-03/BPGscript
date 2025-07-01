@@ -8,38 +8,65 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from collections import defaultdict
 import camelot
+from fuzzywuzzy import process
 
 # Load environment variables
 load_dotenv()
 genai.configure(api_key=os.getenv("gemini_api_key"))
 
 # Load payer and processor mapping
-mapping_path = r"D:\Projects\BPGscript\input\PayerProcessor.xlsx"
+mapping_path = r"C:\Users\surya\Desktop\360\BPGscript\input\PayerProcessor.xlsx"
 payer_df = pd.read_excel(mapping_path)
 processors = payer_df["Processor"].dropna().unique()
 payer_parents = payer_df["Payer Parent"].dropna().unique()
 payers = payer_df["Payer"].dropna().unique()
 
 # Paths
-input_pdf_folder = r"D:\Projects\BPGscript\pdf_folders\unique_pdfs_all"
+input_pdf_folder = r"C:\Users\surya\Desktop\360\BPGscript\trial_pdfs"
 split_folder = os.path.join(input_pdf_folder, "split_pages")
-output_folder = r"D:\Projects\BPGscript\output"
+output_folder = r"C:\Users\surya\Desktop\360\BPGscript\output"
 os.makedirs(split_folder, exist_ok=True)
 os.makedirs(output_folder, exist_ok=True)
 
-output_excel_path = os.path.join(output_folder, "payer_data_ALL_BPGcombinations.xlsx")
+output_excel_path = os.path.join(output_folder, "payer_data_trial.xlsx")
 checkpoint_path = os.path.join(output_folder, "checkpoint_processed_files.json")
 
 # Load previous progress
+# 1. Load data from the previous run if the output file exists
+all_data = []
+skipped_files = []
+if os.path.exists(output_excel_path):
+    print(f"📖 Loading existing data from '{output_excel_path}'...")
+    try:
+        # Load the main data
+        df_existing = pd.read_excel(output_excel_path, sheet_name="Extracted Data")
+        # Convert dataframe to list of dictionaries, handling potential NaN values
+        all_data = df_existing.where(pd.notna(df_existing), None).to_dict('records')
+        print(f"📊 Found {len(all_data)} existing records.")
+
+        # Load the list of previously skipped files
+        if "Skipped PDFs" in pd.ExcelFile(output_excel_path).sheet_names:
+            df_skipped = pd.read_excel(output_excel_path, sheet_name="Skipped PDFs")
+            skipped_files = df_skipped.to_dict('records')
+            print(f"⚠️ Found {len(skipped_files)} previously skipped files.")
+
+    except Exception as e:
+        print(f"❌ Could not read existing Excel file, starting fresh. Error: {e}")
+        all_data = []
+        skipped_files = []
+
+# 2. Load the checkpoint of processed file names
 if os.path.exists(checkpoint_path):
     with open(checkpoint_path, "r") as f:
         processed_files = json.load(f)
     print(f"🔁 Resuming from checkpoint. Already processed: {len(processed_files)} files.")
 else:
-    processed_files = []
-
-all_data = []
-skipped_files = []
+    # If no checkpoint, but we have data, create a list of processed files from the data
+    if all_data:
+        processed_files = list(set(d['Document Name'] for d in all_data if 'Document Name' in d))
+        print(f"📝 Re-created processed file list from existing data: {len(processed_files)} files.")
+    else:
+        processed_files = []
 
 def clean_json_text(raw_text):
     cleaned = raw_text.strip()
@@ -110,7 +137,8 @@ for pdf_file in os.listdir(input_pdf_folder):
         "Payer Parent Name": None,
         "Processor Name": None,
         "Effective Date": None,
-        "Beneficiary Type": None,
+        "Channel": None,
+        "Sub-Channel": None,
         "Address": None,
         "Phone Number": None
     }
@@ -171,29 +199,34 @@ Known matches found in this page (from external reference list):
 
 Please extract the following data points:
 
-📄 Document-level fields:
+ Document-level fields:
 - Payer Name
 - Payer Parent Name
 - Processor Name
 - Effective Date
 - Document Name: "{document_name}"
-- Beneficiary Type (only if explicitly labeled, e.g., “Beneficiary Type:”, “Type of Beneficiary:”, or short mentions like “Medicaid”, “Commercial”, “Medicare Part D”). Do not extract long paragraphs or descriptions.
+- Channel (Line of Business): Extract if the page contains text referring to the type of insurance line, such as Medicare, Medicaid, Commercial, Employer-based, or Exchange. Do not guess — only use what is explicitly written. It is okay if the term is part of a longer phrase (e.g., “Medicare Advantage” or “ACA Exchange”).
+- SubChannel (Sub-Line of Business): Extract if terms such as D-SNP, HMO-POS, PPO, Part D, Dual Eligible Only, HMO, etc. are found. This represents more specific classifications of the plan under the Channel.
 - Address (if found)
 - Phone Number (if found)
 
-💊 Plan-level fields:
+ Plan-level fields:
 - Plan Name / Group Name
 - BIN
 - PCN
 - GRP / Group ID
 
-⚠️ Notes:
+ Notes:
 - Do NOT invent data. Only use values present in this page.
 - Extract 'Payer Name','Processor','Effective Date'/'Effective as of' ONLY if explicitly labeled (not from plan names).
 - If there is no 'Effective Date' given then only look for field labeled as 'Date'.
 - If Plan names span multiple lines, merge them logically.
 - BIN is a 6-digit numeric field.
 - If multiple BIN–PCN–GRP combos are shown, extract all as separate rows.
+- For Channel and SubChannel:
+    - If both are present, return both.
+    - If only SubChannel is found, leave Channel blank.
+    - Do NOT infer missing values.
 
 REQUIRED OUTPUT FORMAT (JSON only, no explanations):
 
@@ -208,7 +241,8 @@ REQUIRED OUTPUT FORMAT (JSON only, no explanations):
     "GRP": "...",
     "Effective Date": "...",
     "Document Name": "...",
-    "Beneficiary Type": "...",
+    "Channel": "...",
+    "SubChannel": "..."
     "Address": "...",
     "Phone Number": "..."
   }}
@@ -241,9 +275,11 @@ Text:
                                 for key in document_level_data:
                                     if entry.get(key) and not document_level_data[key]:
                                         document_level_data[key] = entry[key].strip()
-                                for key, val in document_level_data.items():
-                                    if val:
-                                        entry[key] = val
+                                doc_level_keys_to_copy = set(document_level_data.keys()) - {"Channel", "SubChannel"}
+
+                                for key in doc_level_keys_to_copy:
+                                    if document_level_data[key]:
+                                        entry[key] = document_level_data[key]
                                 entry["Document Name"] = document_name
                                 entry["Matched Payer Parents"] = matched_payer_parents_str
                                 entry["Matched Payer Names"] = matched_payers_str
@@ -262,10 +298,63 @@ Text:
     with open(checkpoint_path, "w") as f:
         json.dump(processed_files, f)
 
-# --- ✅ Postprocessing ---
+channel_fuzzy_map = {
+    # Medicare
+    "medicare": "Medicare",
+    "medicare advantage": "Medicare",
+    "medicare part d": "Medicare",
+    "medicare part c": "Medicare",
+    "mapd": "Medicare",
+    "snf": "Medicare",
+    "dsnp": "Medicare",
+    "ma-pd": "Medicare",
+
+    # Medicaid
+    "medicaid": "Medicaid",
+    "chip": "Medicaid",
+    "medical assistance": "Medicaid",
+    "state funded": "Medicaid",
+    "mcd": "Medicaid",
+
+    # Commercial
+    "commercial": "Commercial",
+    "group": "Commercial",
+    "small group": "Commercial",
+    "large group": "Commercial",
+    "ppo": "Commercial",
+    "hmo": "Commercial",
+
+    # Employer
+    "employer": "Employer",
+    "employer sponsored": "Employer",
+    "asoo": "Employer",
+    "fehbp": "Employer",
+    "fehb": "Employer",
+    "union": "Employer",
+
+    # Exchange
+    "exchange": "Exchange",
+    "marketplace": "Exchange",
+    "aca": "Exchange",
+    "affordable care act": "Exchange",
+    "individual plan": "Exchange",
+    "on exchange": "Exchange",
+    "off exchange": "Exchange",
+}
+
+def normalize_channel(raw_val):
+    if not raw_val:
+        return ""
+    val = raw_val.lower().strip()
+    for keyword, canonical in channel_fuzzy_map.items():
+        if keyword in val:
+            return canonical
+    return raw_val  # fallback
+
+# --- Postprocessing ---
 doc_level_fields = [
     "Processor Name", "Payer Name", "Payer Parent Name",
-    "Effective Date", "Beneficiary Type", "Address", "Phone Number"
+    "Effective Date", "Address", "Phone Number"
 ]
 doc_groups = defaultdict(list)
 for entry in all_data:
@@ -282,6 +371,11 @@ for doc_name, entries in doc_groups.items():
     for entry in entries:
         for field in doc_level_fields:
             entry[field] = doc_level_values.get(field, "")
+
+        # Normalize Channel field here
+        if "Channel" in entry and entry["Channel"]:
+            entry["Channel"] = normalize_channel(entry["Channel"])
+
         final_data.append(entry)
 
 # Save to Excel
