@@ -8,6 +8,11 @@ invalid_rows.csv
 FolderStructure.txt
 /unique_pdfs_all
 /rough
-/trial_pdfs/split_pages
+*/split_pages
 .vscode
 /Justin
+*.csv
+*.xlsx
+!payer_data_020725_test.xlsx
+!BPG.xlsx
+!PayerProcessor.xlsx
