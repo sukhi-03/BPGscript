@@ -5,13 +5,13 @@ from openpyxl import load_workbook
 # ----------------------
 # CONFIGURATION
 # ----------------------
-INPUT_FILE = r'D:\Projects\new\BPGscript\Justin\payer_data_020725_test.xlsx'
+INPUT_FILE = r'D:\Projects\new\BPGscript\output\payer_data_020725.xlsx'
 SHEET_NAME_OUT = 'CleanedOutput'
 
 # ----------------------
 # STEP 1: LOAD DATA
 # ----------------------
-INPUT_SHEET = 'Sheet1'
+INPUT_SHEET = 'Extracted Data'
 df = pd.read_excel(INPUT_FILE, sheet_name=INPUT_SHEET)
 
 # ----------------------
@@ -22,6 +22,7 @@ split_cols = ['BIN', 'PCN', 'GRP']
 def clean_cell(value):
     if pd.isna(value):
         return []
+
     value = str(value)
     
     # Remove text like "(or as appears on card)" or anything after "or"
@@ -36,6 +37,10 @@ def clean_cell(value):
     
     value = value.strip(', ')
     
+    # Check if the cleaned value is empty
+    if not value:
+        return []
+
     return [v.strip() for v in value.split(',') if v.strip()]
 
 # Apply to BIN/PCN/GRP
@@ -54,7 +59,22 @@ df['GRP'] = df['GRP_list']
 df.drop(columns=['BIN_list', 'PCN_list', 'GRP_list'], inplace=True)
 
 # ----------------------
-# STEP 4: WRITE TO NEW SHEET IN SAME FILE
+# STEP 4: CONVERT SPECIAL SYMBOLS TO BLANK CELLS
+# ----------------------
+def convert_special_symbols_to_blank(value):
+    if pd.isna(value):
+        return value
+    value = str(value)
+    if re.match(r'^[#&\\-:]+$', value):
+        return ''
+    return value
+
+# Apply to all columns
+for col in df.columns:
+    df[col] = df[col].apply(convert_special_symbols_to_blank)
+
+# ----------------------
+# STEP 5: WRITE TO NEW SHEET IN SAME FILE
 # ----------------------
 with pd.ExcelWriter(INPUT_FILE, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
     df.to_excel(writer, sheet_name=SHEET_NAME_OUT, index=False)

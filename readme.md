@@ -227,6 +227,10 @@ Execution Order
 
     - consolidated_duplicate_report.xlsx
 
+### `post_gemini-camelot.py`
+- earlier `multi-value_fix.py` now to be ran as a standard script for postprocessing after gemini_camelot.py to explode rows for cells that have comma-seperated data.
+- also removes special characters that might have been extracted as values.
+
 ## 8. Important Notes
 - ✅ Paths: Double-check paths in all scripts before running.
 
