@@ -180,6 +180,10 @@ Execution Order
 3. mastermapping.py → Consolidate mapping with external links
 
 ## 7. Script Details
+
+### `bpg_pdf_search.ipynb`
+-Purpose: ipynb script to search for BPG combinations and find payersheet PDFs on the internet.
+
 ### `DeDup.py`
 - Purpose: Find and manage duplicate PDF files. using md5 algorithm (generates a hash key for every PDF from a binary level and remoe duplicates.)
 
