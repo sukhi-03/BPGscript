@@ -21,14 +21,14 @@ payer_parents = payer_df["Payer Parent"].dropna().unique()
 payers = payer_df["Payer"].dropna().unique()
 
 # Paths
-input_pdf_folder = r"D:\Projects\new\BPGscript\unique_pdfs_all"
+input_pdf_folder = r"D:\Projects\new\BPGscript\trial_pdfs"
 split_folder = os.path.join(input_pdf_folder, "split_pages")
 output_folder = r"D:\Projects\new\BPGscript\output"
 os.makedirs(split_folder, exist_ok=True)
 os.makedirs(output_folder, exist_ok=True)
 
-output_excel_path = os.path.join(output_folder, "payer_data_020725.xlsx")
-output_json_backup_path = os.path.join(output_folder, "payer_data_020725_backup.json")
+output_excel_path = os.path.join(output_folder, "payer_data_280725.xlsx")
+output_json_backup_path = os.path.join(output_folder, "payer_data_280725_backup.json")
 checkpoint_path = os.path.join(output_folder, "checkpoint_processed_files.json")
 
 
